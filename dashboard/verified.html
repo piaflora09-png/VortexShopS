@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Verification complete | Vortex</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body class="landing">
+  <main class="hero verification-card">
+    <div class="brand-mark" aria-hidden="true">V</div>
+    <p class="eyebrow">VORTEX COMMUNITY</p>
+    <h1 id="verificationTitle">Checking verification…</h1>
+    <p id="verificationMessage" role="status">Loading your verification status.</p>
+    <dl id="verificationDetails" class="verification-details" hidden>
+      <div><dt>Discord account</dt><dd id="discordUsername"></dd></div>
+      <div><dt>Verification date</dt><dd id="verifiedAt"></dd></div>
+      <div><dt>Discord user ID</dt><dd id="discordId"></dd></div>
+    </dl>
+    <p class="privacy-note">We show your Discord verification status only. This page does not collect or display your IP address or infer your location.</p>
+    <div class="verification-actions">
+      <a class="btn primary" href="/admin.html">Open dashboard</a>
+      <button class="btn secondary" id="logout" type="button">Log out</button>
+    </div>
+  </main>
+  <script src="/verification.js"></script>
+</body>
+</html>
