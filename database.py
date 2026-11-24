@@ -79,6 +79,17 @@ CREATE TABLE IF NOT EXISTS tickets (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     closed_at TIMESTAMPTZ
 );
+CREATE TABLE IF NOT EXISTS ticket_panel_settings (
+    id SMALLINT PRIMARY KEY CHECK (id = 1),
+    title TEXT NOT NULL DEFAULT 'Vortex Support',
+    description TEXT NOT NULL DEFAULT 'Choose a category below to open a private support ticket.',
+    categories TEXT[] NOT NULL DEFAULT ARRAY['General Support','Report a User','Billing'],
+    panel_channel_id BIGINT,
+    panel_message_id BIGINT,
+    updated_by BIGINT,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+INSERT INTO ticket_panel_settings(id) VALUES(1) ON CONFLICT (id) DO NOTHING;
 CREATE TABLE IF NOT EXISTS ticket_messages (
     id BIGSERIAL PRIMARY KEY,
     ticket_id BIGINT NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
