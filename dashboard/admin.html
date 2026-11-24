@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Vortex Dashboard</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="logo">VORTEX</div>
+    <nav>
+      <a class="active" href="#overview">Overview</a>
+      <a href="#security">Security</a>
+      <a href="#moderation">Moderation</a>
+      <a href="#tickets">Tickets</a>
+      <a href="#campaigns">Campaigns</a>
+      <a href="#giveaways">Giveaways</a>
+      <a href="#transactions">Transactions</a>
+      <button id="logout">Logout</button>
+    </nav>
+  </aside>
+  <main class="content">
+    <header><h1>Command Center</h1><span id="botStatus" class="status">Checking</span></header>
+    <section id="overview" class="cards">
+      <article><label>Verified</label><strong id="verified">—</strong></article>
+      <article><label>Moderation cases</label><strong id="moderation">—</strong></article>
+      <article><label>Open tickets</label><strong id="tickets">—</strong></article>
+      <article><label>Security events</label><strong id="securityCount">—</strong></article>
+    </section>
+    <section class="panel">
+      <h2>Recent security activity</h2>
+      <div id="activity" class="activity"><p>Loading…</p></div>
+    </section>
+  </main>
+  <script src="/dashboard.js"></script>
+</body>
+</html>
