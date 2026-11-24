@@ -375,6 +375,72 @@ class Application:
             "message_url": message.jump_url,
         })
 
+    async def get_verification_panel_settings(self, request):
+        await self.require_staff(request)
+        async with self.pool.acquire() as connection:
+            row = await connection.fetchrow(
+                "SELECT title,description,image_url,panel_channel_id,panel_message_id "
+                "FROM verification_panel_settings WHERE id=1"
+            )
+        guild = self.bot.get_guild(self.settings.guild_id)
+        channels = []
+        if guild:
+            for channel in guild.text_channels:
+                permissions = channel.permissions_for(guild.me) if guild.me else None
+                if permissions and permissions.view_channel and permissions.send_messages:
+                    channels.append({"id": str(channel.id), "name": channel.name})
+        return web.json_response({
+            "title": row["title"],
+            "description": row["description"],
+            "image_url": row["image_url"] or "",
+            "panel_channel_id": str(row["panel_channel_id"]) if row["panel_channel_id"] else "",
+            "panel_message_id": str(row["panel_message_id"]) if row["panel_message_id"] else None,
+            "channels": channels,
+        })
+
+    async def save_verification_panel_settings(self, request):
+        actor = await self.require_admin_action(request)
+        try:
+            data = await request.json()
+        except (ValueError, web.HTTPBadRequest):
+            raise web.HTTPBadRequest(text="Request body must be valid JSON")
+
+        title = str(data.get("title", "")).strip()
+        description = str(data.get("description", "")).strip()
+        image_url = str(data.get("image_url", "")).strip() or None
+        channel_id = str(data.get("panel_channel_id", ""))
+        if not title or len(title) > 100:
+            raise web.HTTPBadRequest(text="Panel title must be between 1 and 100 characters")
+        if not description or len(description) > 1500:
+            raise web.HTTPBadRequest(text="Panel description must be between 1 and 1500 characters")
+        if not channel_id.isdigit():
+            raise web.HTTPBadRequest(text="Select a panel channel")
+
+        channel = self.bot.get_channel(int(channel_id))
+        if not isinstance(channel, discord.TextChannel) or channel.guild.id != self.settings.guild_id:
+            raise web.HTTPBadRequest(text="Selected channel is not a text channel in the configured server")
+        community = self.bot.get_cog("Community")
+        if community is None:
+            raise web.HTTPServiceUnavailable(text="Verification panel is not ready yet")
+        try:
+            from cogs.community import validate_image_url
+            image_url = validate_image_url(image_url)
+            message = await community.publish_verification_panel(
+                channel, title, description, image_url, actor["discord_id"]
+            )
+        except ValueError as error:
+            raise web.HTTPBadRequest(text=str(error))
+        except discord.Forbidden:
+            raise web.HTTPForbidden(text="Bot needs View Channel and Send Messages permission there")
+        except discord.HTTPException:
+            raise web.HTTPBadGateway(text="Discord could not publish the verification panel; try again")
+        return web.json_response({
+            "ok": True,
+            "channel_id": str(channel.id),
+            "message_id": str(message.id),
+            "message_url": message.jump_url,
+        })
+
     async def transaction_history(self, request):
         await self.require_staff(request)
         period = request.query.get("period", "daily")
@@ -477,6 +543,8 @@ def create_app() -> web.Application:
     app.router.add_get("/api/records/{resource}", application.recent_records)
     app.router.add_get("/api/ticket-panel", application.get_ticket_panel_settings)
     app.router.add_post("/api/ticket-panel", application.save_ticket_panel_settings)
+    app.router.add_get("/api/verification-panel", application.get_verification_panel_settings)
+    app.router.add_post("/api/verification-panel", application.save_verification_panel_settings)
     app.router.add_get("/api/transaction-history", application.transaction_history)
     app.router.add_post("/api/transactions", application.transactions)
     app.router.add_get("/api/transactions/{period}", application.transaction_report)
