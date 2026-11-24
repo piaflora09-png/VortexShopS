@@ -15,6 +15,7 @@
       <button class="nav-item" data-view="moderation">Moderation</button>
       <button class="nav-item" data-view="tickets">Tickets</button>
       <button class="nav-item" data-view="ticket-panel">Ticket Panel</button>
+      <button class="nav-item" data-view="verification-panel">Verification Panel</button>
       <button class="nav-item" data-view="campaigns">Campaigns</button>
       <button class="nav-item" data-view="giveaways">Giveaways</button>
       <button class="nav-item" data-view="transactions">Transactions</button>
@@ -62,6 +63,25 @@
         </select>
         <button class="btn primary" id="saveTicketPanel" type="submit">Save and publish panel</button>
         <p id="ticketPanelMessage" role="status" aria-live="polite"></p>
+      </form>
+    </section>
+    <section id="verificationPanelView" class="panel settings-panel" hidden>
+      <p class="eyebrow">DISCORD COMPONENTS V2</p>
+      <p>Set the verification panel’s title, description, optional image, and channel. The button directs members to your website’s Discord OAuth login.</p>
+      <form id="verificationPanelForm">
+        <label for="verificationPanelTitle">Panel title</label>
+        <input id="verificationPanelTitle" name="title" maxlength="100" required>
+        <label for="verificationPanelDescription">Description</label>
+        <textarea id="verificationPanelDescription" name="description" rows="4" maxlength="1500" required></textarea>
+        <label for="verificationPanelImage">Optional panel image URL</label>
+        <input id="verificationPanelImage" name="image_url" type="url" maxlength="2000" placeholder="https://...">
+        <small>Paste a public, direct HTTPS image URL. Leave blank for no image.</small>
+        <label for="verificationPanelChannel">Post panel in channel</label>
+        <select id="verificationPanelChannel" name="panel_channel_id" required>
+          <option value="">Loading channels…</option>
+        </select>
+        <button class="btn primary" id="saveVerificationPanel" type="submit">Save and publish panel</button>
+        <p id="verificationPanelMessage" role="status" aria-live="polite"></p>
       </form>
     </section>
   </main>
