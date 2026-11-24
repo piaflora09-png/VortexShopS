@@ -84,12 +84,25 @@ CREATE TABLE IF NOT EXISTS ticket_panel_settings (
     title TEXT NOT NULL DEFAULT 'Vortex Support',
     description TEXT NOT NULL DEFAULT 'Choose a category below to open a private support ticket.',
     categories TEXT[] NOT NULL DEFAULT ARRAY['General Support','Report a User','Billing'],
+    image_url TEXT,
     panel_channel_id BIGINT,
     panel_message_id BIGINT,
     updated_by BIGINT,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+ALTER TABLE ticket_panel_settings ADD COLUMN IF NOT EXISTS image_url TEXT;
 INSERT INTO ticket_panel_settings(id) VALUES(1) ON CONFLICT (id) DO NOTHING;
+CREATE TABLE IF NOT EXISTS verification_panel_settings (
+    id SMALLINT PRIMARY KEY CHECK (id = 1),
+    title TEXT NOT NULL DEFAULT 'Verify your Discord account',
+    description TEXT NOT NULL DEFAULT 'Use the button below to verify through the Vortex website.',
+    image_url TEXT,
+    panel_channel_id BIGINT,
+    panel_message_id BIGINT,
+    updated_by BIGINT,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+INSERT INTO verification_panel_settings(id) VALUES(1) ON CONFLICT (id) DO NOTHING;
 CREATE TABLE IF NOT EXISTS ticket_messages (
     id BIGSERIAL PRIMARY KEY,
     ticket_id BIGINT NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
