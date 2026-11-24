@@ -14,6 +14,7 @@
       <button class="nav-item" data-view="security">Security</button>
       <button class="nav-item" data-view="moderation">Moderation</button>
       <button class="nav-item" data-view="tickets">Tickets</button>
+      <button class="nav-item" data-view="ticket-panel">Ticket Panel</button>
       <button class="nav-item" data-view="campaigns">Campaigns</button>
       <button class="nav-item" data-view="giveaways">Giveaways</button>
       <button class="nav-item" data-view="transactions">Transactions</button>
@@ -40,6 +41,25 @@
     <section id="recordsView" class="panel" hidden>
       <p class="eyebrow" id="sectionDescription"></p>
       <div id="records" class="records" aria-live="polite"></div>
+    </section>
+    <section id="ticketPanelView" class="panel settings-panel" hidden>
+      <p class="eyebrow">DISCORD COMPONENTS V2</p>
+      <p>Edit the title, help text, categories, and channel. Saving publishes the panel or updates the existing one.</p>
+      <form id="ticketPanelForm">
+        <label for="panelTitle">Panel title</label>
+        <input id="panelTitle" name="title" maxlength="100" required>
+        <label for="panelDescription">Description</label>
+        <textarea id="panelDescription" name="description" rows="4" maxlength="1500" required></textarea>
+        <label for="panelCategories">Categories</label>
+        <input id="panelCategories" name="categories" maxlength="2500" required>
+        <small>Separate categories with semicolons. Up to 25 categories.</small>
+        <label for="panelChannel">Post panel in channel</label>
+        <select id="panelChannel" name="panel_channel_id" required>
+          <option value="">Loading channels…</option>
+        </select>
+        <button class="btn primary" id="saveTicketPanel" type="submit">Save and publish panel</button>
+        <p id="ticketPanelMessage" role="status" aria-live="polite"></p>
+      </form>
     </section>
   </main>
   <script src="/dashboard.js"></script>
