@@ -264,7 +264,7 @@ def create_app() -> web.Application:
         domain=None,
         httponly=True,
         secure=application.settings.public_url.startswith("https://"),
-        samesite="Strict",
+        samesite="Lax",
         max_age=28800,
     )
     app = web.Application()
