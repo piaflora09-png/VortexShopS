@@ -146,7 +146,7 @@ class Application:
             )
         session["session_id"] = session_id
         session["csrf_token"] = csrf
-        raise web.HTTPFound("/admin.html?status=verified")
+        raise web.HTTPFound("/verified.html")
 
     async def auth_status(self, request):
         session = await get_session(request)
@@ -156,9 +156,14 @@ class Application:
         async with self.pool.acquire() as connection:
             row = await connection.fetchrow(
                 "SELECT u.discord_id,u.username,u.avatar,u.is_owner,"
-                "s.csrf_token,s.expires_at FROM sessions s "
+                "s.csrf_token,s.expires_at,"
+                "(SELECT vr.created_at FROM verification_records vr "
+                "WHERE vr.discord_id=u.discord_id AND vr.guild_id=$2 "
+                "AND vr.status='verified' ORDER BY vr.created_at DESC LIMIT 1) AS verified_at "
+                "FROM sessions s "
                 "JOIN users u ON u.discord_id=s.discord_id "
-                "WHERE s.id=$1 AND s.expires_at>NOW()", uuid.UUID(session_id),
+                "WHERE s.id=$1 AND s.expires_at>NOW()",
+                uuid.UUID(session_id), self.settings.guild_id,
             )
         if not row:
             return web.json_response({"authenticated": False})
@@ -166,6 +171,12 @@ class Application:
             "authenticated": True,
             "user": {"id": str(row["discord_id"]), "username": row["username"],
                      "avatar": row["avatar"], "owner": row["is_owner"]},
+            "csrf_token": row["csrf_token"],
+            "verification": {
+                "verified": row["verified_at"] is not None,
+                "verified_at": row["verified_at"].isoformat() if row["verified_at"] else None,
+                "guild_id": str(self.settings.guild_id),
+            },
         })
 
     async def logout(self, request):
@@ -290,6 +301,74 @@ class Application:
 
         return web.json_response({"items": [serialize(row) for row in rows]})
 
+    async def get_ticket_panel_settings(self, request):
+        await self.require_staff(request)
+        async with self.pool.acquire() as connection:
+            row = await connection.fetchrow(
+                "SELECT title,description,categories,panel_channel_id,panel_message_id "
+                "FROM ticket_panel_settings WHERE id=1"
+            )
+        guild = self.bot.get_guild(self.settings.guild_id)
+        channels = []
+        if guild:
+            for channel in guild.text_channels:
+                permissions = channel.permissions_for(guild.me) if guild.me else None
+                if permissions and permissions.view_channel and permissions.send_messages:
+                    channels.append({"id": str(channel.id), "name": channel.name})
+        return web.json_response({
+            "title": row["title"],
+            "description": row["description"],
+            "categories": list(row["categories"]),
+            "panel_channel_id": str(row["panel_channel_id"]) if row["panel_channel_id"] else "",
+            "panel_message_id": str(row["panel_message_id"]) if row["panel_message_id"] else None,
+            "channels": channels,
+        })
+
+    async def save_ticket_panel_settings(self, request):
+        actor = await self.require_admin_action(request)
+        try:
+            data = await request.json()
+        except (ValueError, web.HTTPBadRequest):
+            raise web.HTTPBadRequest(text="Request body must be valid JSON")
+
+        title = str(data.get("title", "")).strip()
+        description = str(data.get("description", "")).strip()
+        raw_categories = str(data.get("categories", ""))
+        channel_id = str(data.get("panel_channel_id", ""))
+        categories = [category.strip()[:100] for category in raw_categories.split(";")
+                      if category.strip()]
+        if not title or len(title) > 100:
+            raise web.HTTPBadRequest(text="Panel title must be between 1 and 100 characters")
+        if not description or len(description) > 1500:
+            raise web.HTTPBadRequest(text="Panel description must be between 1 and 1500 characters")
+        if not categories or len(categories) > 25:
+            raise web.HTTPBadRequest(text="Provide between 1 and 25 categories separated by semicolons")
+        if len({category.casefold() for category in categories}) != len(categories):
+            raise web.HTTPBadRequest(text="Ticket categories must be unique")
+        if not channel_id.isdigit():
+            raise web.HTTPBadRequest(text="Select a panel channel")
+
+        channel = self.bot.get_channel(int(channel_id))
+        if not isinstance(channel, discord.TextChannel) or channel.guild.id != self.settings.guild_id:
+            raise web.HTTPBadRequest(text="Selected channel is not a text channel in the configured server")
+        community = self.bot.get_cog("Community")
+        if community is None:
+            raise web.HTTPServiceUnavailable(text="Ticket system is not ready yet")
+        try:
+            message = await community.publish_panel(
+                channel, title, description, categories, actor["discord_id"]
+            )
+        except discord.Forbidden:
+            raise web.HTTPForbidden(text="Bot needs View Channel and Send Messages permission there")
+        except discord.HTTPException:
+            raise web.HTTPBadGateway(text="Discord could not publish the ticket panel; try again")
+        return web.json_response({
+            "ok": True,
+            "channel_id": str(channel.id),
+            "message_id": str(message.id),
+            "message_url": message.jump_url,
+        })
+
     async def transaction_history(self, request):
         await self.require_staff(request)
         period = request.query.get("period", "daily")
@@ -379,8 +458,10 @@ def create_app() -> web.Application:
     dashboard = Path(__file__).resolve().parent / "dashboard"
     app.router.add_get("/", lambda request: web.FileResponse(dashboard / "index.html"))
     app.router.add_get("/admin.html", lambda request: web.FileResponse(dashboard / "admin.html"))
+    app.router.add_get("/verified.html", lambda request: web.FileResponse(dashboard / "verified.html"))
     app.router.add_get("/style.css", lambda request: web.FileResponse(dashboard / "style.css"))
     app.router.add_get("/dashboard.js", lambda request: web.FileResponse(dashboard / "dashboard.js"))
+    app.router.add_get("/verification.js", lambda request: web.FileResponse(dashboard / "verification.js"))
     app.router.add_get("/health", application.health)
     app.router.add_get("/auth/login", application.oauth_login)
     app.router.add_get("/auth/callback", application.oauth_callback)
@@ -388,6 +469,8 @@ def create_app() -> web.Application:
     app.router.add_post("/auth/logout", application.logout)
     app.router.add_get("/api/overview", application.overview)
     app.router.add_get("/api/records/{resource}", application.recent_records)
+    app.router.add_get("/api/ticket-panel", application.get_ticket_panel_settings)
+    app.router.add_post("/api/ticket-panel", application.save_ticket_panel_settings)
     app.router.add_get("/api/transaction-history", application.transaction_history)
     app.router.add_post("/api/transactions", application.transactions)
     app.router.add_get("/api/transactions/{period}", application.transaction_report)
