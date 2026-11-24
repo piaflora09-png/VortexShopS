@@ -137,6 +137,7 @@ async function loadTicketPanelSettings() {
     document.querySelector("#panelTitle").value = data.title;
     document.querySelector("#panelDescription").value = data.description;
     document.querySelector("#panelCategories").value = data.categories.join("; ");
+    document.querySelector("#panelImage").value = data.image_url;
     const channelSelect = document.querySelector("#panelChannel");
     channelSelect.replaceChildren(new Option("Select a channel", ""));
     for (const channel of data.channels) {
