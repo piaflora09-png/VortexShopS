@@ -305,7 +305,7 @@ class Application:
         await self.require_staff(request)
         async with self.pool.acquire() as connection:
             row = await connection.fetchrow(
-                "SELECT title,description,categories,panel_channel_id,panel_message_id "
+                "SELECT title,description,categories,image_url,panel_channel_id,panel_message_id "
                 "FROM ticket_panel_settings WHERE id=1"
             )
         guild = self.bot.get_guild(self.settings.guild_id)
@@ -319,6 +319,7 @@ class Application:
             "title": row["title"],
             "description": row["description"],
             "categories": list(row["categories"]),
+            "image_url": row["image_url"] or "",
             "panel_channel_id": str(row["panel_channel_id"]) if row["panel_channel_id"] else "",
             "panel_message_id": str(row["panel_message_id"]) if row["panel_message_id"] else None,
             "channels": channels,
@@ -335,6 +336,7 @@ class Application:
         description = str(data.get("description", "")).strip()
         raw_categories = str(data.get("categories", ""))
         channel_id = str(data.get("panel_channel_id", ""))
+        image_url = str(data.get("image_url", "")).strip() or None
         categories = [category.strip()[:100] for category in raw_categories.split(";")
                       if category.strip()]
         if not title or len(title) > 100:
@@ -355,9 +357,13 @@ class Application:
         if community is None:
             raise web.HTTPServiceUnavailable(text="Ticket system is not ready yet")
         try:
+            from cogs.community import validate_image_url
+            image_url = validate_image_url(image_url)
             message = await community.publish_panel(
-                channel, title, description, categories, actor["discord_id"]
+                channel, title, description, categories, actor["discord_id"], image_url
             )
+        except ValueError as error:
+            raise web.HTTPBadRequest(text=str(error))
         except discord.Forbidden:
             raise web.HTTPForbidden(text="Bot needs View Channel and Send Messages permission there")
         except discord.HTTPException:
