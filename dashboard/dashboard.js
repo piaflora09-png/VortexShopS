@@ -4,6 +4,7 @@ const labels = {
   moderation: "Moderation history",
   tickets: "Support tickets",
   "ticket-panel": "Ticket Panel Editor",
+  "verification-panel": "Verification Panel Editor",
   campaigns: "Campaign history",
   giveaways: "Giveaway history",
   transactions: "Transactions",
@@ -65,6 +66,16 @@ function makeMessage(text, className = "empty-state") {
   return message;
 }
 
+async function responseMessage(response) {
+  const text = await response.text();
+  if (!text) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { message: text };
+  }
+}
+
 async function showView(view) {
   document.querySelectorAll(".nav-item").forEach(button => {
     const active = button.dataset.view === view;
@@ -73,10 +84,16 @@ async function showView(view) {
   });
   document.querySelector("#pageTitle").textContent = labels[view] ?? "Dashboard";
   document.querySelector("#overviewView").hidden = view !== "overview";
-  document.querySelector("#recordsView").hidden = view === "overview" || view === "ticket-panel";
+  document.querySelector("#recordsView").hidden =
+    view === "overview" || view === "ticket-panel" || view === "verification-panel";
   document.querySelector("#ticketPanelView").hidden = view !== "ticket-panel";
+  document.querySelector("#verificationPanelView").hidden = view !== "verification-panel";
   if (view === "ticket-panel") {
     await loadTicketPanelSettings();
+    return;
+  }
+  if (view === "verification-panel") {
+    await loadVerificationPanelSettings();
     return;
   }
   if (view === "overview") return;
@@ -97,7 +114,7 @@ async function showView(view) {
       if (response.status === 403) throw new Error("This section is limited to configured staff.");
       throw new Error("Could not load these records. Try again.");
     }
-    const result = await response.json();
+    const result = await responseMessage(response);
     records.replaceChildren();
     if (!result.items.length) {
       records.append(makeMessage("No records yet."));
@@ -129,11 +146,11 @@ async function loadTicketPanelSettings() {
   try {
     const response = await fetch("/api/ticket-panel");
     if (response.status === 401) { window.location.replace("/"); return; }
+    const data = await responseMessage(response);
     if (!response.ok) {
       if (response.status === 403) throw new Error("Ticket panel settings are limited to configured staff.");
-      throw new Error("Could not load ticket panel settings.");
+      throw new Error(data.message ?? "Could not load ticket panel settings.");
     }
-    const data = await response.json();
     document.querySelector("#panelTitle").value = data.title;
     document.querySelector("#panelDescription").value = data.description;
     document.querySelector("#panelCategories").value = data.categories.join("; ");
@@ -168,7 +185,60 @@ document.querySelector("#ticketPanelForm")?.addEventListener("submit", async eve
       },
       body: JSON.stringify(Object.fromEntries(form.entries())),
     });
-    const result = await response.json();
+    const result = await responseMessage(response);
+    if (!response.ok) throw new Error(result.message ?? result.error ?? "Could not publish panel.");
+    message.textContent = `Panel published or updated. Open it: ${result.message_url}`;
+  } catch (error) {
+    message.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+});
+
+async function loadVerificationPanelSettings() {
+  const message = document.querySelector("#verificationPanelMessage");
+  message.textContent = "Loading verification panel settings…";
+  try {
+    const response = await fetch("/api/verification-panel");
+    if (response.status === 401) { window.location.replace("/"); return; }
+    const data = await responseMessage(response);
+    if (!response.ok) {
+      if (response.status === 403) throw new Error("Verification panel settings are limited to configured staff.");
+      throw new Error(data.message ?? "Could not load verification panel settings.");
+    }
+    document.querySelector("#verificationPanelTitle").value = data.title;
+    document.querySelector("#verificationPanelDescription").value = data.description;
+    document.querySelector("#verificationPanelImage").value = data.image_url;
+    const channelSelect = document.querySelector("#verificationPanelChannel");
+    channelSelect.replaceChildren(new Option("Select a channel", ""));
+    for (const channel of data.channels) {
+      channelSelect.add(new Option(`#${channel.name}`, channel.id));
+    }
+    channelSelect.value = data.panel_channel_id;
+    message.textContent = data.panel_message_id
+      ? "Existing panel loaded. Save to update it."
+      : "No panel has been published yet.";
+  } catch (error) {
+    message.textContent = error.message;
+  }
+}
+
+document.querySelector("#verificationPanelForm")?.addEventListener("submit", async event => {
+  event.preventDefault();
+  const button = document.querySelector("#saveVerificationPanel");
+  const message = document.querySelector("#verificationPanelMessage");
+  button.disabled = true;
+  message.textContent = "Publishing panel…";
+  try {
+    const response = await fetch("/api/verification-panel", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRF-Token": window.vortexCsrfToken ?? "",
+      },
+      body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget).entries())),
+    });
+    const result = await responseMessage(response);
     if (!response.ok) throw new Error(result.message ?? result.error ?? "Could not publish panel.");
     message.textContent = `Panel published or updated. Open it: ${result.message_url}`;
   } catch (error) {
