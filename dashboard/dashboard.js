@@ -3,6 +3,7 @@ const labels = {
   security: "Security activity",
   moderation: "Moderation history",
   tickets: "Support tickets",
+  "ticket-panel": "Ticket Panel Editor",
   campaigns: "Campaign history",
   giveaways: "Giveaway history",
   transactions: "Transactions",
@@ -16,6 +17,7 @@ async function loadStatus() {
     window.location.replace("/");
     return false;
   }
+  window.vortexCsrfToken = data.csrf_token;
   return true;
 }
 
@@ -71,7 +73,12 @@ async function showView(view) {
   });
   document.querySelector("#pageTitle").textContent = labels[view] ?? "Dashboard";
   document.querySelector("#overviewView").hidden = view !== "overview";
-  document.querySelector("#recordsView").hidden = view === "overview";
+  document.querySelector("#recordsView").hidden = view === "overview" || view === "ticket-panel";
+  document.querySelector("#ticketPanelView").hidden = view !== "ticket-panel";
+  if (view === "ticket-panel") {
+    await loadTicketPanelSettings();
+    return;
+  }
   if (view === "overview") return;
 
   const records = document.querySelector("#records");
@@ -115,6 +122,60 @@ async function showView(view) {
     records.replaceChildren(makeMessage(error.message, "error-state"));
   }
 }
+
+async function loadTicketPanelSettings() {
+  const message = document.querySelector("#ticketPanelMessage");
+  message.textContent = "Loading ticket panel settings…";
+  try {
+    const response = await fetch("/api/ticket-panel");
+    if (response.status === 401) { window.location.replace("/"); return; }
+    if (!response.ok) {
+      if (response.status === 403) throw new Error("Ticket panel settings are limited to configured staff.");
+      throw new Error("Could not load ticket panel settings.");
+    }
+    const data = await response.json();
+    document.querySelector("#panelTitle").value = data.title;
+    document.querySelector("#panelDescription").value = data.description;
+    document.querySelector("#panelCategories").value = data.categories.join("; ");
+    const channelSelect = document.querySelector("#panelChannel");
+    channelSelect.replaceChildren(new Option("Select a channel", ""));
+    for (const channel of data.channels) {
+      channelSelect.add(new Option(`#${channel.name}`, channel.id));
+    }
+    channelSelect.value = data.panel_channel_id;
+    message.textContent = data.panel_message_id
+      ? "Existing panel loaded. Save to update it."
+      : "No panel has been published yet.";
+  } catch (error) {
+    message.textContent = error.message;
+  }
+}
+
+document.querySelector("#ticketPanelForm")?.addEventListener("submit", async event => {
+  event.preventDefault();
+  const button = document.querySelector("#saveTicketPanel");
+  const message = document.querySelector("#ticketPanelMessage");
+  button.disabled = true;
+  message.textContent = "Publishing panel…";
+  try {
+    const form = new FormData(event.currentTarget);
+    const response = await fetch("/api/ticket-panel", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRF-Token": window.vortexCsrfToken ?? "",
+      },
+      body: JSON.stringify(Object.fromEntries(form.entries())),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.message ?? result.error ?? "Could not publish panel.");
+    message.textContent = `Panel published or updated. Open it: ${result.message_url}`;
+  } catch (error) {
+    message.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+});
 
 document.querySelector("#logout")?.addEventListener("click", async () => {
   const button = document.querySelector("#logout");
