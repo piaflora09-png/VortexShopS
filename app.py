@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlencode
 
+import discord
 from aiohttp import web
 from aiohttp_session import setup as setup_session, get_session
 from aiohttp_session.cookie_storage import EncryptedCookieStorage
@@ -90,6 +91,7 @@ class Application:
         token_data = await exchange_code(code, self.settings)
         identity = await get_discord_identity(token_data["access_token"])
         discord_id = int(identity["id"])
+        role_failure = None
         async with self.pool.acquire() as connection:
             await connection.execute(
                 "INSERT INTO users(discord_id,username,avatar) VALUES($1,$2,$3) "
@@ -102,17 +104,38 @@ class Application:
             verified = member is not None
             if member:
                 role = guild.get_role(self.settings.verified_role_id)
-                if role:
-                    await member.add_roles(role, reason="Discord OAuth2 verification")
+                bot_member = guild.me
+                if role is None:
+                    role_failure = "Configured Verified role was not found in the server."
+                elif role not in member.roles:
+                    if bot_member is None or not bot_member.guild_permissions.manage_roles:
+                        role_failure = "The bot needs the Manage Roles permission."
+                    elif role >= bot_member.top_role:
+                        role_failure = "Move the bot's highest role above the Verified role."
+                    else:
+                        try:
+                            await member.add_roles(role, reason="Discord OAuth2 verification")
+                        except discord.Forbidden:
+                            role_failure = (
+                                "Discord denied role assignment. Check the bot's Manage Roles "
+                                "permission and role hierarchy."
+                            )
             await connection.execute(
                 "INSERT INTO verification_records(discord_id,guild_id,status,details)"
                 " VALUES($1,$2,$3,$4)",
                 discord_id, self.settings.guild_id,
-                "verified" if verified else "failed",
-                "Membership found in configured guild" if verified else "Membership not found",
+                "verified" if verified and role_failure is None else "failed",
+                ("Membership and Verified role confirmed" if verified and role_failure is None
+                 else role_failure if verified else "Membership not found"),
             )
         if not verified:
             raise web.HTTPFound("/admin.html?status=not_member")
+        if role_failure:
+            raise web.HTTPServiceUnavailable(
+                text=f"Server membership was confirmed, but verification could not finish: "
+                     f"{role_failure} Ask a server administrator to fix the bot permissions, "
+                     "then start login again."
+            )
         session_id = str(uuid.uuid4())
         csrf = secrets.token_urlsafe(32)
         expires = datetime.now(timezone.utc) + timedelta(hours=8)
@@ -168,8 +191,21 @@ class Application:
             raise web.HTTPUnauthorized()
         return row
 
-    async def require_admin_action(self, request) -> asyncpg.Record:
+    async def require_staff(self, request) -> asyncpg.Record:
         row = await self.require_session(request)
+        if row["is_owner"]:
+            return row
+        guild = self.bot.get_guild(self.settings.guild_id)
+        member = guild.get_member(row["discord_id"]) if guild else None
+        if not member or not (
+            member.guild_permissions.administrator or
+            any(role.id in self.settings.staff_role_ids for role in member.roles)
+        ):
+            raise web.HTTPForbidden(text="Staff permission required")
+        return row
+
+    async def require_admin_action(self, request) -> asyncpg.Record:
+        row = await self.require_staff(request)
         try:
             data = await request.json()
         except Exception:
@@ -178,17 +214,10 @@ class Application:
         provided = request.headers.get("X-CSRF-Token", data.get("csrf_token", ""))
         if not hmac.compare_digest(provided, session.get("csrf_token", "")):
             raise web.HTTPForbidden(text="Invalid CSRF token")
-        guild = self.bot.get_guild(self.settings.guild_id)
-        member = guild.get_member(row["discord_id"]) if guild else None
-        if not row["is_owner"] and not (
-            member and (member.guild_permissions.administrator or
-                        any(role.id in self.settings.staff_role_ids for role in member.roles))
-        ):
-            raise web.HTTPForbidden(text="Staff permission required")
         return row
 
     async def overview(self, request):
-        await self.require_session(request)
+        await self.require_staff(request)
         async with self.pool.acquire() as connection:
             verified = await connection.fetchval(
                 "SELECT COUNT(*) FROM verification_records WHERE status='verified'"
@@ -216,6 +245,80 @@ class Application:
             ],
         })
 
+    async def recent_records(self, request):
+        await self.require_staff(request)
+        resource = request.match_info["resource"]
+        queries = {
+            "security": (
+                "SELECT id,event_type,user_id,details,created_at FROM security_events "
+                "ORDER BY created_at DESC LIMIT 50"
+            ),
+            "moderation": (
+                "SELECT id,user_id,staff_id,action,reason,created_at FROM moderation_cases "
+                "ORDER BY created_at DESC LIMIT 50"
+            ),
+            "tickets": (
+                "SELECT id,channel_id,user_id,category,status,assigned_staff_id,created_at,closed_at "
+                "FROM tickets ORDER BY created_at DESC LIMIT 50"
+            ),
+            "campaigns": (
+                "SELECT id,name,status,channel_ids,scheduled_at,created_at FROM campaigns "
+                "ORDER BY created_at DESC LIMIT 50"
+            ),
+            "giveaways": (
+                "SELECT id,prize_type,prize,status,ends_at,winner_id,created_at FROM giveaways "
+                "ORDER BY created_at DESC LIMIT 50"
+            ),
+        }
+        query = queries.get(resource)
+        if query is None:
+            raise web.HTTPNotFound(text="Unknown dashboard section")
+        async with self.pool.acquire() as connection:
+            rows = await connection.fetch(query)
+
+        def serialize(row):
+            item = {}
+            for key, value in row.items():
+                if isinstance(value, datetime):
+                    value = value.isoformat()
+                elif key.endswith("_id") and value is not None:
+                    value = str(value)
+                elif key == "channel_ids":
+                    value = [str(channel_id) for channel_id in value]
+                item[key] = value
+            return item
+
+        return web.json_response({"items": [serialize(row) for row in rows]})
+
+    async def transaction_history(self, request):
+        await self.require_staff(request)
+        period = request.query.get("period", "daily")
+        intervals = {
+            "daily": timedelta(days=1),
+            "weekly": timedelta(days=7),
+            "monthly": timedelta(days=30),
+        }
+        interval = intervals.get(period)
+        if interval is None:
+            raise web.HTTPBadRequest(text="Invalid report period")
+        async with self.pool.acquire() as connection:
+            rows = await connection.fetch(
+                "SELECT id,amount_cents,currency,status,description,created_at "
+                "FROM transactions WHERE created_at >= NOW() - $1 "
+                "ORDER BY created_at DESC LIMIT 50",
+                interval,
+            )
+        return web.json_response({
+            "items": [{
+                "id": row["id"],
+                "amount_cents": row["amount_cents"],
+                "currency": row["currency"],
+                "status": row["status"],
+                "description": row["description"],
+                "created_at": row["created_at"].isoformat(),
+            } for row in rows],
+        })
+
     async def transactions(self, request):
         actor = await self.require_admin_action(request)
         data = await request.json()
@@ -237,7 +340,7 @@ class Application:
         return web.json_response({"ok": True})
 
     async def transaction_report(self, request):
-        await self.require_session(request)
+        await self.require_staff(request)
         period = request.match_info.get("period", "daily")
         intervals = {"daily": "1 day", "weekly": "7 days", "monthly": "30 days"}
         if period not in intervals:
@@ -284,6 +387,8 @@ def create_app() -> web.Application:
     app.router.add_get("/auth/status", application.auth_status)
     app.router.add_post("/auth/logout", application.logout)
     app.router.add_get("/api/overview", application.overview)
+    app.router.add_get("/api/records/{resource}", application.recent_records)
+    app.router.add_get("/api/transaction-history", application.transaction_history)
     app.router.add_post("/api/transactions", application.transactions)
     app.router.add_get("/api/transactions/{period}", application.transaction_report)
     return app
