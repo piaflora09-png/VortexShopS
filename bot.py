@@ -23,6 +23,10 @@ class VortexBot(commands.Bot):
         await self.load_extension("cogs.security")
         await self.load_extension("cogs.moderation")
         await self.load_extension("cogs.community")
+        guild = discord.Object(id=self.settings.guild_id)
+        self.tree.copy_global_to(guild=guild)
+        synced = await self.tree.sync(guild=guild)
+        print(f"Synced {len(synced)} slash commands to guild {self.settings.guild_id}")
 
     async def log_security(self, event_type: str, user_id: int | None, details: dict) -> None:
         async with self.pool.acquire() as connection:
@@ -40,7 +44,6 @@ class VortexBot(commands.Bot):
             )
 
     async def on_ready(self) -> None:
-        await self.tree.sync(guild=discord.Object(id=self.settings.guild_id))
         print(f"Vortex bot ready as {self.user}")
 
     async def on_member_join(self, member: discord.Member) -> None:
