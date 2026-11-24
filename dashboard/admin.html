@@ -10,27 +10,36 @@
   <aside class="sidebar">
     <div class="logo">VORTEX</div>
     <nav>
-      <a class="active" href="#overview">Overview</a>
-      <a href="#security">Security</a>
-      <a href="#moderation">Moderation</a>
-      <a href="#tickets">Tickets</a>
-      <a href="#campaigns">Campaigns</a>
-      <a href="#giveaways">Giveaways</a>
-      <a href="#transactions">Transactions</a>
+      <button class="nav-item active" data-view="overview">Overview</button>
+      <button class="nav-item" data-view="security">Security</button>
+      <button class="nav-item" data-view="moderation">Moderation</button>
+      <button class="nav-item" data-view="tickets">Tickets</button>
+      <button class="nav-item" data-view="campaigns">Campaigns</button>
+      <button class="nav-item" data-view="giveaways">Giveaways</button>
+      <button class="nav-item" data-view="transactions">Transactions</button>
       <button id="logout">Logout</button>
     </nav>
   </aside>
   <main class="content">
-    <header><h1>Command Center</h1><span id="botStatus" class="status">Checking</span></header>
-    <section id="overview" class="cards">
-      <article><label>Verified</label><strong id="verified">—</strong></article>
-      <article><label>Moderation cases</label><strong id="moderation">—</strong></article>
-      <article><label>Open tickets</label><strong id="tickets">—</strong></article>
-      <article><label>Security events</label><strong id="securityCount">—</strong></article>
+    <header class="page-header">
+      <div><p class="eyebrow">COMMUNITY OPERATIONS</p><h1 id="pageTitle">Command Center</h1></div>
+      <span id="botStatus" class="status">Checking</span>
+    </header>
+    <section id="overviewView">
+      <div class="cards">
+        <article><label>Verified members</label><strong id="verified">—</strong></article>
+        <article><label>Moderation cases</label><strong id="moderationCount">—</strong></article>
+        <article><label>Open tickets</label><strong id="ticketsCount">—</strong></article>
+        <article><label>Security events</label><strong id="securityCount">—</strong></article>
+      </div>
+      <section class="panel">
+        <h2>Recent security activity</h2>
+        <div id="activity" class="activity" aria-live="polite"><p>Loading dashboard…</p></div>
+      </section>
     </section>
-    <section class="panel">
-      <h2>Recent security activity</h2>
-      <div id="activity" class="activity"><p>Loading…</p></div>
+    <section id="recordsView" class="panel" hidden>
+      <p class="eyebrow" id="sectionDescription"></p>
+      <div id="records" class="records" aria-live="polite"></div>
     </section>
   </main>
   <script src="/dashboard.js"></script>
