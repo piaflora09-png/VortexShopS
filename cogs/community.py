@@ -1,4 +1,5 @@
 import re
+from urllib.parse import urlparse
 
 import discord
 from discord import app_commands
@@ -20,6 +21,23 @@ def parse_categories(value: str) -> list[str]:
     return categories
 
 
+def validate_image_url(value: str | None) -> str | None:
+    if value is None or not value.strip():
+        return None
+    value = value.strip()
+    parsed = urlparse(value)
+    if (
+        len(value) > 2000
+        or parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+        or any(character.isspace() for character in value)
+    ):
+        raise ValueError("Image URL must be a valid public HTTPS URL.")
+    return value
+
+
 class TicketCategorySelect(discord.ui.Select):
     def __init__(self, bot, categories: list[str]):
         super().__init__(
@@ -39,13 +57,55 @@ class TicketCategorySelect(discord.ui.Select):
 
 
 class TicketPanelView(discord.ui.LayoutView):
-    def __init__(self, bot, title: str, description: str, categories: list[str]):
+    def __init__(
+        self,
+        bot,
+        title: str,
+        description: str,
+        categories: list[str],
+        image_url: str | None = None,
+    ):
         super().__init__(timeout=None)
-        self.add_item(discord.ui.Container(
-            discord.ui.TextDisplay(f"# {title}\n{description}"),
+        components = [discord.ui.TextDisplay(f"# {title}\n{description}")]
+        if image_url:
+            components.append(discord.ui.MediaGallery(
+                discord.MediaGalleryItem(media=image_url, description=title[:100])
+            ))
+        components.extend([
             discord.ui.Separator(),
             discord.ui.ActionRow(TicketCategorySelect(bot, categories)),
+        ])
+        self.add_item(discord.ui.Container(
+            *components,
             accent_color=discord.Color.from_rgb(57, 255, 136),
+        ))
+
+
+class VerificationPanelView(discord.ui.LayoutView):
+    def __init__(
+        self,
+        public_url: str,
+        title: str,
+        description: str,
+        image_url: str | None = None,
+    ):
+        super().__init__(timeout=None)
+        components = [discord.ui.TextDisplay(f"# {title}\n{description}")]
+        if image_url:
+            components.append(discord.ui.MediaGallery(
+                discord.MediaGalleryItem(media=image_url, description=title[:100])
+            ))
+        components.extend([
+            discord.ui.Separator(),
+            discord.ui.ActionRow(discord.ui.Button(
+                label="Verify with Discord",
+                style=discord.ButtonStyle.link,
+                url=f"{public_url.rstrip('/')}/auth/login",
+            )),
+        ])
+        self.add_item(discord.ui.Container(
+            *components,
+            accent_color=discord.Color.from_rgb(155, 92, 255),
         ))
 
 
@@ -181,7 +241,10 @@ class Community(commands.Cog):
     async def cog_load(self) -> None:
         async with self.bot.pool.acquire() as connection:
             config = await connection.fetchrow(
-                "SELECT title,description,categories FROM ticket_panel_settings WHERE id=1"
+                "SELECT title,description,categories,image_url FROM ticket_panel_settings WHERE id=1"
+            )
+            verification = await connection.fetchrow(
+                "SELECT title,description,image_url FROM verification_panel_settings WHERE id=1"
             )
         if config:
             self.bot.add_view(TicketPanelView(
@@ -189,12 +252,20 @@ class Community(commands.Cog):
                 config["title"],
                 config["description"],
                 list(config["categories"]),
+                config["image_url"],
             ))
         else:
             self.bot.add_view(TicketPanelView(
                 self.bot, "Vortex Support", "Choose a category below.", DEFAULT_CATEGORIES
             ))
         self.bot.add_view(TicketControlsView("Use the button below when your support request is resolved."))
+        if verification:
+            self.bot.add_view(VerificationPanelView(
+                self.bot.settings.public_url,
+                verification["title"],
+                verification["description"],
+                verification["image_url"],
+            ))
 
     async def publish_panel(
         self,
@@ -203,8 +274,10 @@ class Community(commands.Cog):
         description: str,
         categories: list[str],
         actor_id: int,
+        image_url: str | None = None,
     ) -> discord.Message:
-        view = TicketPanelView(self.bot, title, description, categories)
+        image_url = validate_image_url(image_url)
+        view = TicketPanelView(self.bot, title, description, categories, image_url)
         async with self.bot.pool.acquire() as connection:
             saved = await connection.fetchrow(
                 "SELECT panel_channel_id,panel_message_id FROM ticket_panel_settings WHERE id=1"
@@ -219,13 +292,46 @@ class Community(commands.Cog):
             message = await channel.send(view=view)
         async with self.bot.pool.acquire() as connection:
             await connection.execute(
-                "UPDATE ticket_panel_settings SET title=$1,description=$2,categories=$3,"
-                "panel_channel_id=$4,panel_message_id=$5,updated_by=$6,updated_at=NOW() "
+                "UPDATE ticket_panel_settings SET title=$1,description=$2,categories=$3,image_url=$4,"
+                "panel_channel_id=$5,panel_message_id=$6,updated_by=$7,updated_at=NOW() "
                 "WHERE id=1",
-                title, description, categories, channel.id, message.id, actor_id,
+                title, description, categories, image_url, channel.id, message.id, actor_id,
             )
 
-        self.bot.add_view(TicketPanelView(self.bot, title, description, categories))
+        self.bot.add_view(TicketPanelView(self.bot, title, description, categories, image_url))
+        return message
+
+    async def publish_verification_panel(
+        self,
+        channel: discord.TextChannel,
+        title: str,
+        description: str,
+        image_url: str | None,
+        actor_id: int,
+    ) -> discord.Message:
+        image_url = validate_image_url(image_url)
+        view = VerificationPanelView(
+            self.bot.settings.public_url, title, description, image_url
+        )
+        async with self.bot.pool.acquire() as connection:
+            saved = await connection.fetchrow(
+                "SELECT panel_channel_id,panel_message_id FROM verification_panel_settings WHERE id=1"
+            )
+        if saved and saved["panel_channel_id"] == channel.id and saved["panel_message_id"]:
+            try:
+                message = await channel.fetch_message(saved["panel_message_id"])
+                await message.edit(view=view)
+            except discord.NotFound:
+                message = await channel.send(view=view)
+        else:
+            message = await channel.send(view=view)
+        async with self.bot.pool.acquire() as connection:
+            await connection.execute(
+                "UPDATE verification_panel_settings SET title=$1,description=$2,image_url=$3,"
+                "panel_channel_id=$4,panel_message_id=$5,updated_by=$6,updated_at=NOW() WHERE id=1",
+                title, description, image_url, channel.id, message.id, actor_id,
+            )
+        self.bot.add_view(view)
         return message
 
     @app_commands.command(name="ticket", description="Create a private support ticket")
@@ -247,6 +353,7 @@ class Community(commands.Cog):
         title: app_commands.Range[str, 1, 100],
         description: app_commands.Range[str, 1, 1500],
         categories: app_commands.Range[str, 1, 1000],
+        image_url: app_commands.Range[str, 1, 2000] | None = None,
     ) -> None:
         if not interaction.guild or interaction.guild.id != self.bot.settings.guild_id:
             await interaction.response.send_message(
@@ -258,8 +365,9 @@ class Community(commands.Cog):
             return
         try:
             parsed_categories = parse_categories(categories)
+            image_url = validate_image_url(image_url)
             message = await self.publish_panel(
-                channel, title, description, parsed_categories, interaction.user.id
+                channel, title, description, parsed_categories, interaction.user.id, image_url
             )
         except ValueError as error:
             await interaction.response.send_message(str(error), ephemeral=True)
@@ -272,6 +380,50 @@ class Community(commands.Cog):
             return
         await interaction.response.send_message(
             f"Ticket panel published or updated in {channel.mention}: {message.jump_url}",
+            ephemeral=True,
+        )
+
+    @app_commands.command(
+        name="verification-panel",
+        description="Create or update a Discord verification panel",
+    )
+    @app_commands.describe(
+        channel="Channel where members should see the panel",
+        title="Panel heading",
+        description="Explain that verification happens on the Vortex website",
+        image_url="Optional public HTTPS image URL",
+    )
+    async def verification_panel(
+        self,
+        interaction: discord.Interaction,
+        channel: discord.TextChannel,
+        title: app_commands.Range[str, 1, 100],
+        description: app_commands.Range[str, 1, 1500],
+        image_url: app_commands.Range[str, 1, 2000] | None = None,
+    ) -> None:
+        if not interaction.guild or interaction.guild.id != self.bot.settings.guild_id:
+            await interaction.response.send_message(
+                "This command is only available in the configured server.", ephemeral=True
+            )
+            return
+        if not staff_allowed(interaction.user, self.bot.settings.staff_role_ids):
+            await interaction.response.send_message("Staff permission required.", ephemeral=True)
+            return
+        try:
+            image_url = validate_image_url(image_url)
+            message = await self.publish_verification_panel(
+                channel, title, description, image_url, interaction.user.id
+            )
+        except ValueError as error:
+            await interaction.response.send_message(str(error), ephemeral=True)
+            return
+        except discord.Forbidden:
+            await interaction.response.send_message(
+                "The bot needs View Channel and Send Messages permission there.", ephemeral=True
+            )
+            return
+        await interaction.response.send_message(
+            f"Verification panel published or updated in {channel.mention}: {message.jump_url}",
             ephemeral=True,
         )
 
